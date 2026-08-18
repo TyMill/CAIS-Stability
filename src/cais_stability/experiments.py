@@ -73,14 +73,24 @@ class RobustnessConfig:
 
 
 def _domain_seed(domain: DomainName, seed: int) -> int:
-    return {DomainName.MARITIME: 10_000, DomainName.SUPPLY_CHAIN: 20_000, DomainName.SMART_GRID: 30_000}[domain] + seed
+    offsets = {
+        DomainName.MARITIME: 10_000,
+        DomainName.SUPPLY_CHAIN: 20_000,
+        DomainName.SMART_GRID: 30_000,
+    }
+    return offsets[domain] + seed
 
 
 def _delayed(history: list[SystemState], delay: int) -> SystemState:
     return history[max(0, len(history) - 1 - delay)]
 
 
-def run_episode(domain: DomainName, policy: GovernancePolicy, disturbance: DisturbanceConfig, config: EpisodeConfig | None = None) -> EpisodeRecord:
+def run_episode(
+    domain: DomainName,
+    policy: GovernancePolicy,
+    disturbance: DisturbanceConfig,
+    config: EpisodeConfig | None = None,
+) -> EpisodeRecord:
     episode = config or EpisodeConfig()
     env = NormalizedEnvironment(domain)
     env.reset()
@@ -96,23 +106,45 @@ def run_episode(domain: DomainName, policy: GovernancePolicy, disturbance: Distu
 
     for step in range(episode.horizon):
         sample = sample_disturbance(step, disturbance, rng)
-        observed = env.observe(sample.observation_error, disturbance.risk_estimation_error)
+        observed = env.observe(
+            sample.observation_error,
+            disturbance.risk_estimation_error,
+        )
         observations.append(observed)
         proposal = env.agent_proposal(rng, disturbance.agent_degradation)
-        decision = policy.decide(_delayed(observations, disturbance.monitoring_delay), proposal)
-        transition = env.step(decision.action, sample.shock, disturbance.observation_noise)
+        control_state = _delayed(observations, disturbance.monitoring_delay)
+        decision = policy.decide(control_state, proposal)
+        transition = env.step(
+            decision.action,
+            sample.shock,
+            disturbance.observation_noise,
+        )
         decisions.append(decision)
         states.append(transition.state)
         utilities.append(transition.task_utility)
         hard_violations += int(transition.hard_violation)
+
         if step >= disturbance.onset and degraded_start is None and not env.is_nominal():
             degraded_start = step
-        if degraded_start is not None and recovery_time is None and step >= disturbance.end and env.is_nominal():
+        recovered_after_disturbance = (
+            degraded_start is not None
+            and recovery_time is None
+            and step >= disturbance.end
+            and env.is_nominal()
+        )
+        if recovered_after_disturbance:
             recovery_time = step - degraded_start
 
     if degraded_start is None:
         recovery_time = 0
-    metrics: EpisodeMetrics = summarize_episode(decisions, hard_violations, recovery_time, episode.recovery_deadline, utilities, states)
+    metrics: EpisodeMetrics = summarize_episode(
+        decisions,
+        hard_violations,
+        recovery_time,
+        episode.recovery_deadline,
+        utilities,
+        states,
+    )
     return EpisodeRecord(
         domain.value,
         policy.name,
@@ -145,34 +177,72 @@ def run_campaign(config: CampaignConfig | None = None) -> list[EpisodeRecord]:
                 agent_degradation=campaign.agent_degradation,
             )
             for seed in campaign.seeds:
+                episode = EpisodeConfig(
+                    campaign.horizon,
+                    campaign.recovery_deadline,
+                    seed,
+                )
                 for policy in default_policies():
-                    records.append(run_episode(domain, policy, disturbance, EpisodeConfig(campaign.horizon, campaign.recovery_deadline, seed)))
+                    records.append(run_episode(domain, policy, disturbance, episode))
     return records
 
 
-def run_robustness_campaign(config: RobustnessConfig | None = None) -> list[EpisodeRecord]:
+def run_robustness_campaign(
+    config: RobustnessConfig | None = None,
+) -> list[EpisodeRecord]:
     campaign = config or RobustnessConfig()
     records: list[EpisodeRecord] = []
     for domain in campaign.domains:
         for noise in campaign.observation_noise:
             for delay in campaign.monitoring_delay:
                 for degradation in campaign.agent_degradation:
-                    disturbance = DisturbanceConfig(campaign.intensity, 10, 6, noise, delay, 0.0, degradation)
+                    disturbance = DisturbanceConfig(
+                        intensity=campaign.intensity,
+                        onset=10,
+                        duration=6,
+                        observation_noise=noise,
+                        monitoring_delay=delay,
+                        risk_estimation_error=0.0,
+                        agent_degradation=degradation,
+                    )
                     for seed in campaign.seeds:
+                        episode = EpisodeConfig(campaign.horizon, 25, seed)
                         for policy in default_policies():
-                            records.append(run_episode(domain, policy, disturbance, EpisodeConfig(campaign.horizon, 25, seed)))
+                            records.append(
+                                run_episode(domain, policy, disturbance, episode)
+                            )
     return records
 
 
-def run_ablation_campaign(config: CampaignConfig | None = None) -> list[EpisodeRecord]:
-    campaign = config or CampaignConfig(intensities=(0.50, 0.75, 1.0), observation_noise=0.10, monitoring_delay=1, agent_degradation=0.25)
+def run_ablation_campaign(
+    config: CampaignConfig | None = None,
+) -> list[EpisodeRecord]:
+    campaign = config or CampaignConfig(
+        intensities=(0.50, 0.75, 1.0),
+        observation_noise=0.10,
+        monitoring_delay=1,
+        agent_degradation=0.25,
+    )
     records: list[EpisodeRecord] = []
     for domain in campaign.domains:
         for intensity in campaign.intensities:
-            disturbance = DisturbanceConfig(intensity, campaign.disturbance_onset, campaign.disturbance_duration, campaign.observation_noise, campaign.monitoring_delay, campaign.risk_estimation_error, campaign.agent_degradation)
+            disturbance = DisturbanceConfig(
+                intensity=intensity,
+                onset=campaign.disturbance_onset,
+                duration=campaign.disturbance_duration,
+                observation_noise=campaign.observation_noise,
+                monitoring_delay=campaign.monitoring_delay,
+                risk_estimation_error=campaign.risk_estimation_error,
+                agent_degradation=campaign.agent_degradation,
+            )
             for seed in campaign.seeds:
+                episode = EpisodeConfig(
+                    campaign.horizon,
+                    campaign.recovery_deadline,
+                    seed,
+                )
                 for policy in ablation_policies():
-                    records.append(run_episode(domain, policy, disturbance, EpisodeConfig(campaign.horizon, campaign.recovery_deadline, seed)))
+                    records.append(run_episode(domain, policy, disturbance, episode))
     return records
 
 
@@ -189,32 +259,59 @@ def write_records_csv(records: list[EpisodeRecord], path: str | Path) -> Path:
     return output
 
 
-def aggregate_records(records: list[EpisodeRecord]) -> list[dict[str, str | float | int]]:
+def aggregate_records(
+    records: list[EpisodeRecord],
+) -> list[dict[str, str | float | int]]:
     groups: dict[tuple[str, str, float], list[EpisodeRecord]] = {}
     for record in records:
-        groups.setdefault((record.domain, record.method, record.intensity), []).append(record)
+        key = (record.domain, record.method, record.intensity)
+        groups.setdefault(key, []).append(record)
+
     rows: list[dict[str, str | float | int]] = []
     for (domain, method, intensity), group in sorted(groups.items()):
-        recovery_times = [r.recovery_time for r in group if r.recovery_time is not None]
-        rows.append({
-            "domain": domain,
-            "method": method,
-            "intensity": intensity,
-            "n": len(group),
-            "hard_violation_rate_mean": fmean(r.hard_violation_rate for r in group),
-            "recovery_success_rate": fmean(float(r.recovery_success) for r in group),
-            "recovery_time_mean": fmean(recovery_times) if recovery_times else -1.0,
-            "autonomy_retention_mean": fmean(r.autonomy_retention for r in group),
-            "intervention_rate_mean": fmean(r.intervention_rate for r in group),
-            "fallback_rate_mean": fmean(r.fallback_rate for r in group),
-            "task_utility_mean": fmean(r.mean_task_utility for r in group),
-            "peak_risk_mean": fmean(r.peak_risk for r in group),
-            "peak_degradation_mean": fmean(r.peak_degradation for r in group),
-        })
+        recovery_times = [
+            record.recovery_time
+            for record in group
+            if record.recovery_time is not None
+        ]
+        rows.append(
+            {
+                "domain": domain,
+                "method": method,
+                "intensity": intensity,
+                "n": len(group),
+                "hard_violation_rate_mean": fmean(
+                    record.hard_violation_rate for record in group
+                ),
+                "recovery_success_rate": fmean(
+                    float(record.recovery_success) for record in group
+                ),
+                "recovery_time_mean": (
+                    fmean(recovery_times) if recovery_times else -1.0
+                ),
+                "autonomy_retention_mean": fmean(
+                    record.autonomy_retention for record in group
+                ),
+                "intervention_rate_mean": fmean(
+                    record.intervention_rate for record in group
+                ),
+                "fallback_rate_mean": fmean(record.fallback_rate for record in group),
+                "task_utility_mean": fmean(
+                    record.mean_task_utility for record in group
+                ),
+                "peak_risk_mean": fmean(record.peak_risk for record in group),
+                "peak_degradation_mean": fmean(
+                    record.peak_degradation for record in group
+                ),
+            }
+        )
     return rows
 
 
-def write_aggregate_csv(rows: list[dict[str, str | float | int]], path: str | Path) -> Path:
+def write_aggregate_csv(
+    rows: list[dict[str, str | float | int]],
+    path: str | Path,
+) -> Path:
     if not rows:
         raise ValueError("rows must not be empty")
     output = Path(path)
