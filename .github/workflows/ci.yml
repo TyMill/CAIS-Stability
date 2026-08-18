@@ -36,3 +36,8 @@ jobs:
           python scripts/run_article_experiments.py --seeds 1 --horizon 30 --intensities 0.5 --output /tmp/cais-raw.csv
           python scripts/build_article_outputs.py --input /tmp/cais-raw.csv --output /tmp/cais-summary.csv
           test -s /tmp/cais-summary.csv
+      - name: Calibration pipeline smoke test
+        run: |
+          python scripts/run_calibration.py --seeds 1 --horizon 30 --count 3 --intensities 0.0 0.5 1.0 --raw-output /tmp/calibration-raw.csv --report-output /tmp/calibration-report.csv
+          test -s /tmp/calibration-raw.csv
+          test -s /tmp/calibration-report.csv
