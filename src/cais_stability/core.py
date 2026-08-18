@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class GovernanceMode(str, Enum):
+class GovernanceMode(StrEnum):
     """Execution modes used by the dynamic governance operator."""
 
     AUTO = "auto"
@@ -52,7 +52,9 @@ class GovernanceConfig:
         if not self.recover_threshold <= self.fallback_threshold <= 1.0:
             raise ValueError("invalid fallback threshold")
         if not 0.0 <= self.hysteresis < self.constrain_threshold:
-            raise ValueError("hysteresis must be non-negative and smaller than constrain threshold")
+            raise ValueError(
+                "hysteresis must be non-negative and smaller than constrain threshold"
+            )
         if self.max_action <= 0.0:
             raise ValueError("max_action must be positive")
         if not -self.max_action <= self.recovery_action <= self.max_action:
@@ -80,7 +82,10 @@ class DynamicGovernance:
     @staticmethod
     def effective_risk(state: SystemState) -> float:
         """Fuse risk, degradation, and uncertainty into a normalized control signal."""
-        return min(1.0, state.risk + 0.25 * state.degradation + 0.25 * state.uncertainty)
+        return min(
+            1.0,
+            state.risk + 0.25 * state.degradation + 0.25 * state.uncertainty,
+        )
 
     def decide(
         self,
@@ -102,7 +107,8 @@ class DynamicGovernance:
             and max(risk, state.degradation) >= cfg.recover_threshold - cfg.hysteresis
         )
         hold_constraint = (
-            previous_mode in {
+            previous_mode
+            in {
                 GovernanceMode.CONSTRAIN,
                 GovernanceMode.RECOVER,
                 GovernanceMode.FALLBACK,
