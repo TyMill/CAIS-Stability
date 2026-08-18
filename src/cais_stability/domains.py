@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from .core import SystemState
 
 
-class DomainName(str, Enum):
+class DomainName(StrEnum):
     """Application domains used in the article benchmark."""
 
     MARITIME = "maritime"
