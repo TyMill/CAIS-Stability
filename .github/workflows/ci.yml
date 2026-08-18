@@ -31,3 +31,8 @@ jobs:
         run: pytest -q
       - name: Smoke verification
         run: python scripts/verify.py
+      - name: Article pipeline smoke test
+        run: |
+          python scripts/run_article_experiments.py --seeds 1 --horizon 30 --intensities 0.5 --output /tmp/cais-raw.csv
+          python scripts/build_article_outputs.py --input /tmp/cais-raw.csv --output /tmp/cais-summary.csv
+          test -s /tmp/cais-summary.csv
