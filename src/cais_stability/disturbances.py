@@ -17,7 +17,12 @@ class DisturbanceConfig:
     agent_degradation: float = 0.10
 
     def __post_init__(self) -> None:
-        for name, value in (("intensity", self.intensity), ("observation_noise", self.observation_noise), ("agent_degradation", self.agent_degradation)):
+        bounded_values = (
+            ("intensity", self.intensity),
+            ("observation_noise", self.observation_noise),
+            ("agent_degradation", self.agent_degradation),
+        )
+        for name, value in bounded_values:
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must lie in [0, 1]")
         if self.onset < 0:
@@ -41,8 +46,15 @@ class DisturbanceSample:
     observation_error: float
 
 
-def sample_disturbance(step: int, config: DisturbanceConfig, rng: Random) -> DisturbanceSample:
+def sample_disturbance(
+    step: int,
+    config: DisturbanceConfig,
+    rng: Random,
+) -> DisturbanceSample:
     active = config.onset <= step < config.end
-    shock = min(1.0, config.intensity * (0.85 + 0.30 * rng.random())) if active else 0.0
+    if active:
+        shock = min(1.0, config.intensity * (0.85 + 0.30 * rng.random()))
+    else:
+        shock = 0.0
     observation_error = config.observation_noise * rng.uniform(-1.0, 1.0)
     return DisturbanceSample(active, shock, observation_error)
